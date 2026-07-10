@@ -40,6 +40,25 @@
     font-size: 12px !important;
     display: inline-block !important;
   }
+  .field { margin: 0 0 8px; }
+  .field label {
+    display: block;
+    font-size: 11px;
+    color: #444 !important;
+    margin: 0 0 3px;
+  }
+  .field input[type="text"],
+  .field input[type="password"] {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 12px;
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    color: #1a1a1a !important;
+    background: #fff !important;
+  }
+  .field-note { color: #888 !important; font-size: 10px; margin: 4px 0 0; line-height: 1.4; }
   button {
     font-size: 13px;
     padding: 8px 16px;
@@ -105,6 +124,25 @@
     <label class="option"><input type="checkbox" id="force" /><span>Reasignar aunque ya tenga un token vinculado</span></label>
   </div>
 
+  <div class="group">
+    <div class="group-title">Desambiguar con Figma (opcional)</div>
+    <div class="field">
+      <label for="figmaToken">Token personal de Figma</label>
+      <input type="password" id="figmaToken" placeholder="figd_..." autocomplete="off" />
+    </div>
+    <div class="field">
+      <label for="figmaUrl">Link del archivo/frame de Figma</label>
+      <input type="text" id="figmaUrl" placeholder="https://www.figma.com/design/..." autocomplete="off" />
+    </div>
+    <p class="field-note">
+      Si rellenas esto, cuando un valor coincida con varios tokens a la vez,
+      el plugin lee las variables reales de ese archivo de Figma y elige el
+      token con el mismo nombre, en vez de dejarlo sin resolver. Se guarda
+      solo en este navegador (no se envía a ningún sitio salvo a la API de
+      Figma). Déjalo vacío si prefieres decidir tú los casos ambiguos a mano.
+    </p>
+  </div>
+
   <button id="run" class="primary">Reconectar tokens</button>
 
   <div id="log" style="display:none"></div>
@@ -114,6 +152,16 @@
     const runBtn = document.getElementById("run");
     const logEl = document.getElementById("log");
     const summaryEl = document.getElementById("summary");
+    const figmaTokenEl = document.getElementById("figmaToken");
+    const figmaUrlEl = document.getElementById("figmaUrl");
+
+    // Recordar lo que se escribió la última vez, solo en este navegador.
+    try {
+      figmaTokenEl.value = localStorage.getItem("rt_figmaToken") || "";
+      figmaUrlEl.value = localStorage.getItem("rt_figmaUrl") || "";
+    } catch (e) {
+      /* localStorage puede no estar disponible en algún contexto; no pasa nada */
+    }
 
     function appendLog(text) {
       logEl.style.display = "block";
@@ -121,7 +169,67 @@
       logEl.scrollTop = logEl.scrollHeight;
     }
 
-    runBtn.addEventListener("click", () => {
+    // ---------- Lectura de variables de color reales desde la API de Figma ----------
+
+    function extractFigmaFileKey(url) {
+      const m = String(url || "").match(/figma\.com\/(?:design|file)\/([a-zA-Z0-9]+)/);
+      return m ? m[1] : null;
+    }
+
+    function resolveFigmaVarValue(variables, variable, modeId, depth) {
+      if (!variable || depth > 10) return null;
+      let raw = variable.valuesByMode ? variable.valuesByMode[modeId] : undefined;
+      if (raw === undefined) {
+        const fallbackModeId = variable.valuesByMode ? Object.keys(variable.valuesByMode)[0] : undefined;
+        if (!fallbackModeId) return null;
+        raw = variable.valuesByMode[fallbackModeId];
+      }
+      if (raw && typeof raw === "object" && raw.type === "VARIABLE_ALIAS") {
+        return resolveFigmaVarValue(variables, variables[raw.id], modeId, depth + 1);
+      }
+      return raw;
+    }
+
+    function rgbaToHex(c) {
+      const toHex = (v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, "0");
+      return "#" + toHex(c.r) + toHex(c.g) + toHex(c.b);
+    }
+
+    async function fetchFigmaColorHints(fileKey, token) {
+      const res = await fetch(`https://api.figma.com/v1/files/${fileKey}/variables/local`, {
+        headers: { "X-Figma-Token": token },
+      });
+      if (!res.ok) {
+        throw new Error(`la API de Figma respondió ${res.status}`);
+      }
+      const data = await res.json();
+      const variables = (data.meta && data.meta.variables) || {};
+      const collections = (data.meta && data.meta.variableCollections) || {};
+
+      const preferredMode = {};
+      for (const collId of Object.keys(collections)) {
+        const coll = collections[collId];
+        const modes = coll.modes || [];
+        const light = modes.find((m) => /light/i.test(m.name));
+        const byDefault = modes.find((m) => m.modeId === coll.defaultModeId);
+        preferredMode[collId] = (light || byDefault || modes[0] || {}).modeId;
+      }
+
+      const hints = {};
+      for (const id of Object.keys(variables)) {
+        const v = variables[id];
+        if (!v || v.resolvedType !== "COLOR") continue;
+        const modeId = preferredMode[v.variableCollectionId] || Object.keys(v.valuesByMode || {})[0];
+        const resolved = resolveFigmaVarValue(variables, v, modeId, 0);
+        if (!resolved || typeof resolved !== "object" || resolved.r === undefined) continue;
+        const hex = rgbaToHex(resolved);
+        if (!hints[hex]) hints[hex] = [];
+        hints[hex].push(v.name);
+      }
+      return hints;
+    }
+
+    runBtn.addEventListener("click", async () => {
       logEl.textContent = "";
       summaryEl.style.display = "none";
       runBtn.disabled = true;
@@ -129,8 +237,34 @@
 
       const scope = document.querySelector('input[name="scope"]:checked').value;
       const force = document.getElementById("force").checked;
+      const figmaToken = figmaTokenEl.value.trim();
+      const figmaUrl = figmaUrlEl.value.trim();
 
-      parent.postMessage({ type: "run", options: { scope, force } }, "*");
+      try {
+        localStorage.setItem("rt_figmaToken", figmaToken);
+        localStorage.setItem("rt_figmaUrl", figmaUrl);
+      } catch (e) {
+        /* no-op */
+      }
+
+      let hints = null;
+      if (figmaToken && figmaUrl) {
+        const fileKey = extractFigmaFileKey(figmaUrl);
+        if (!fileKey) {
+          appendLog("⚠ No pude leer el file key de esa URL de Figma — sigo sin el mapa de Figma (decidirás tú los casos ambiguos).");
+        } else {
+          appendLog("Leyendo variables de Figma...");
+          try {
+            hints = await fetchFigmaColorHints(fileKey, figmaToken);
+            appendLog(`Listo: ${Object.keys(hints).length} colores distintos leídos de Figma.`);
+          } catch (err) {
+            appendLog("⚠ No se pudieron leer las variables de Figma (" + ((err && err.message) || err) + "). ¿Token sin permisos, o el archivo no tiene la API de Variables habilitada? Sigo sin el mapa de Figma.");
+            hints = null;
+          }
+        }
+      }
+
+      parent.postMessage({ type: "run", options: { scope, force, hints } }, "*");
     });
 
     window.addEventListener("message", (event) => {
@@ -142,10 +276,16 @@
       } else if (msg.type === "result") {
         const r = msg.report;
         appendLog(
-          `Aplicados: ${r.applied} · Sin match: ${r.unmatched} · Ya vinculados (omitidos): ${r.skipped || 0} · Ambiguos: ${r.ambiguous} · Errores: ${r.errors.length}`
+          `Aplicados: ${r.applied} (${r.resolvedByFigma || 0} desambiguados con Figma) · Sin match: ${r.unmatched} · Ya vinculados (omitidos): ${r.skipped || 0} · Ambiguos: ${r.ambiguous} · Errores: ${r.errors.length}`
         );
+        if (r.ambiguousDetails && r.ambiguousDetails.length) {
+          appendLog("--- Ambiguos (revisar a mano) ---");
+          r.ambiguousDetails.slice(0, 30).forEach((d) => appendLog("• " + d));
+          if (r.ambiguousDetails.length > 30) appendLog(`... y ${r.ambiguousDetails.length - 30} más.`);
+        }
         if (r.errors.length) {
-          r.errors.forEach((e) => appendLog("⚠ " + e));
+          appendLog("--- Errores ---");
+          r.errors.slice(0, 30).forEach((e) => appendLog("⚠ " + e));
         }
         summaryEl.style.display = "grid";
         summaryEl.innerHTML = `

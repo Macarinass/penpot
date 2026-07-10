@@ -14,7 +14,7 @@
 //
 // No inventa valores nuevos ni crea tokens: solo reconecta lo que ya coincide.
 
-penpot.ui.open("Reconectar tokens", "ui.html", { width: 380, height: 560 });
+penpot.ui.open("Reconectar tokens", "ui.html", { width: 400, height: 700 });
 
 // ---------- Normalización de valores para poder compararlos ----------
 
@@ -180,14 +180,50 @@ function alreadyLinked(shape, prop) {
   return !!(shape.tokens && shape.tokens[prop]);
 }
 
-function applyMatch(report, shape, tokenList, props, label, force) {
+// Normaliza un nombre de token/variable para poder compararlos aunque usen
+// separadores distintos: Figma usa "color/bg/secondary", Penpot (y nuestro
+// exportador) usa "color.bg.secondary".
+function normalizeTokenName(name) {
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[/.]/g, ".");
+}
+
+function applyMatch(report, shape, tokenList, props, label, force, hints, matchKey) {
   if (!tokenList || tokenList.length === 0) return "unmatched";
   if (!force && props.every((p) => alreadyLinked(shape, p))) return "skipped";
-  const token = tokenList[0];
+
+  let candidates = tokenList;
+  let resolvedByHint = false;
+
+  if (tokenList.length > 1 && hints && matchKey && hints[matchKey] && hints[matchKey].length) {
+    const wanted = hints[matchKey].map(normalizeTokenName);
+    const picked = tokenList.filter((t) => wanted.includes(normalizeTokenName(t.name)));
+    if (picked.length >= 1 && picked.length < tokenList.length) {
+      candidates = picked;
+      resolvedByHint = picked.length === 1;
+    }
+  }
+
+  if (candidates.length > 1) {
+    // Varios tokens tienen exactamente el mismo valor resuelto (p.ej. dos
+    // colores semánticos distintos que hoy coinciden en el mismo hex), y no
+    // se pudo desambiguar ni por el valor ni con el mapa de Figma (si lo
+    // había). No hay forma fiable de adivinar cuál es "el correcto" — así
+    // que NO se aplica ninguno automáticamente: se deja constancia para que
+    // lo revises tú.
+    const names = candidates.map((t) => t.name).join(", ");
+    report.ambiguous++;
+    report.ambiguousDetails.push(`${label} en "${shape.name}": coinciden ${candidates.length} tokens (${names}) — sin aplicar, revísalo a mano.`);
+    return "ambiguous";
+  }
+
+  const token = candidates[0];
   try {
     token.applyToShapes([shape], props);
     report.applied++;
-    if (tokenList.length > 1) report.ambiguous++;
+    if (resolvedByHint) report.resolvedByFigma++;
     return "applied";
   } catch (err) {
     report.errors.push(`${label} en "${shape.name}": ${(err && err.message) || err}`);
@@ -195,10 +231,115 @@ function applyMatch(report, shape, tokenList, props, label, force) {
   }
 }
 
-// ---------- Lógica principal ----------
+// ---------- Procesado de una capa individual ----------
 
-function run(options, log, done) {
-  const { scope, force } = options;
+function processShape(shape, idx, report, force, hints) {
+  // Fills (color)
+  if (Array.isArray(shape.fills)) {
+    shape.fills.forEach((fill) => {
+      if (!fill || !fill.fillColor) return;
+      // Si el fill ya está vinculado a un color de BIBLIOTECA de Penpot
+      // (fillColorRefId) —típico cuando el diseño se trajo con un
+      // importador tipo "Penpot Exporter" que sí preserva las variables de
+      // Figma como colores de biblioteca— no lo tocamos: ya está bien
+      // conectado, y no es lo mismo que estar vinculado a un Token.
+      if (!force && fill.fillColorRefId) {
+        report.skipped++;
+        return;
+      }
+      const key = normalizeColor(fill.fillColor);
+      tally(report, applyMatch(report, shape, idx.color.get(key), ["fill"], "fill", force, hints, key));
+    });
+  }
+
+  // Strokes (color + width)
+  if (Array.isArray(shape.strokes)) {
+    shape.strokes.forEach((stroke) => {
+      if (stroke && stroke.strokeColor) {
+        if (!force && stroke.strokeColorRefId) {
+          report.skipped++;
+        } else {
+          const key = normalizeColor(stroke.strokeColor);
+          tally(report, applyMatch(report, shape, idx.color.get(key), ["strokeColor"], "strokeColor", force, hints, key));
+        }
+      }
+      if (stroke && stroke.strokeWidth !== undefined) {
+        const key = normalizeNumber(stroke.strokeWidth);
+        tally(report, applyMatch(report, shape, idx.borderWidth.get(key), ["strokeWidth"], "strokeWidth", force));
+      }
+    });
+  }
+
+  // Opacity
+  if (typeof shape.opacity === "number") {
+    const key = normalizeNumber(shape.opacity);
+    tally(report, applyMatch(report, shape, idx.opacity.get(key), ["opacity"], "opacity", force));
+  }
+
+  // Border radius (las 4 esquinas a la vez, con el mismo token si coinciden)
+  const corners = ["borderRadiusTopLeft", "borderRadiusTopRight", "borderRadiusBottomRight", "borderRadiusBottomLeft"];
+  if (corners.every((c) => typeof shape[c] === "number")) {
+    const values = corners.map((c) => normalizeNumber(shape[c]));
+    const allEqual = values.every((v) => v === values[0]);
+    if (allEqual) {
+      tally(report, applyMatch(report, shape, idx.borderRadius.get(values[0]), corners, "borderRadius", force));
+    } else {
+      corners.forEach((c, i) => {
+        tally(report, applyMatch(report, shape, idx.borderRadius.get(values[i]), [c], c, force));
+      });
+    }
+  }
+
+  // Texto: primero intentamos el token de Typography completo (combo
+  // exacto), y si no hay match exacto, probamos cada propiedad suelta.
+  if (shape.type === "text") {
+    const famKey = shape.fontFamily && shape.fontFamily !== "mixed" ? String(shape.fontFamily).trim().toLowerCase() : null;
+    const sizeKey = normalizeNumber(shape.fontSize);
+    const weightKey = normalizeWeight(shape.fontWeight, shape.fontStyle === "italic");
+    const lsKey = normalizeNumber(shape.letterSpacing);
+    const caseKey = normalizeTextCase(shape.textTransform);
+    const decKey = normalizeTextDecoration(shape.textDecoration);
+
+    const typoKey = [famKey || "", sizeKey, weightKey, lsKey, caseKey, decKey].join("|");
+    const typoMatch = idx.typography.get(typoKey);
+
+    if (typoMatch && typoMatch.length > 0) {
+      tally(report, applyMatch(report, shape, typoMatch, ["typography"], "typography", force));
+    } else {
+      if (famKey) tally(report, applyMatch(report, shape, idx.fontFamilies.get(famKey), ["fontFamilies"], "fontFamilies", force));
+      if (sizeKey !== null) tally(report, applyMatch(report, shape, idx.fontSizes.get(sizeKey), ["fontSize"], "fontSize", force));
+      if (weightKey !== null) tally(report, applyMatch(report, shape, idx.fontWeights.get(weightKey), ["fontWeight"], "fontWeight", force));
+      if (lsKey !== null) tally(report, applyMatch(report, shape, idx.letterSpacing.get(lsKey), ["letterSpacing"], "letterSpacing", force));
+    }
+  }
+}
+
+function tally(report, result) {
+  if (result === "unmatched") report.unmatched++;
+  else if (result === "skipped") report.skipped++;
+  // "applied" y "error" ya se cuentan dentro de applyMatch
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ---------- Lógica principal ----------
+//
+// Se procesa en lotes con una pequeña pausa entre ellos (`sleep(0)`) para
+// devolver el control al navegador. Sin esto, un diseño grande (cientos o
+// miles de capas, típico al traer un frame completo desde Figma) bloquea el
+// hilo principal el tiempo suficiente para que el navegador muestre
+// "La página no responde".
+
+const CHUNK_SIZE = 12;
+
+function emptyReport() {
+  return { applied: 0, unmatched: 0, ambiguous: 0, skipped: 0, resolvedByFigma: 0, ambiguousDetails: [], errors: [] };
+}
+
+async function run(options, log, done) {
+  const { scope, force, hints } = options;
 
   let roots;
   if (scope === "selection" && penpot.selection && penpot.selection.length > 0) {
@@ -210,82 +351,34 @@ function run(options, log, done) {
 
   if (roots.length === 0) {
     log("No hay capas en el ámbito elegido (¿seleccionaste algo?).");
-    done({ applied: 0, unmatched: 0, ambiguous: 0, errors: [] });
+    done(emptyReport());
     return;
   }
 
   const idx = buildIndexes(log);
+  await sleep(0);
+
   const shapes = collectShapes(roots);
   log(`Revisando ${shapes.length} capas...`);
+  if (shapes.length > 300) {
+    log(`Son bastantes capas — puede tardar uno o dos minutos. No cierres el plugin, va actualizando el progreso.`);
+  }
+  if (hints && Object.keys(hints).length > 0) {
+    log(`Usando ${Object.keys(hints).length} valores de color leídos de Figma para desambiguar.`);
+  }
 
-  const report = { applied: 0, unmatched: 0, ambiguous: 0, skipped: 0, errors: [] };
+  const report = emptyReport();
 
-  for (const shape of shapes) {
-    // Fills (color)
-    if (Array.isArray(shape.fills)) {
-      shape.fills.forEach((fill, i) => {
-        if (!fill || !fill.fillColor) return;
-        const key = normalizeColor(fill.fillColor);
-        const res = applyMatch(report, shape, idx.color.get(key), ["fill"], "fill", force);
-        tally(report, res);
-      });
-    }
+  for (let i = 0; i < shapes.length; i++) {
+    processShape(shapes[i], idx, report, force, hints);
 
-    // Strokes (color + width)
-    if (Array.isArray(shape.strokes)) {
-      shape.strokes.forEach((stroke) => {
-        if (stroke && stroke.strokeColor) {
-          const key = normalizeColor(stroke.strokeColor);
-          tally(report, applyMatch(report, shape, idx.color.get(key), ["strokeColor"], "strokeColor", force));
-        }
-        if (stroke && stroke.strokeWidth !== undefined) {
-          const key = normalizeNumber(stroke.strokeWidth);
-          tally(report, applyMatch(report, shape, idx.borderWidth.get(key), ["strokeWidth"], "strokeWidth", force));
-        }
-      });
-    }
-
-    // Opacity
-    if (typeof shape.opacity === "number") {
-      const key = normalizeNumber(shape.opacity);
-      tally(report, applyMatch(report, shape, idx.opacity.get(key), ["opacity"], "opacity", force));
-    }
-
-    // Border radius (las 4 esquinas a la vez, con el mismo token si coinciden)
-    const corners = ["borderRadiusTopLeft", "borderRadiusTopRight", "borderRadiusBottomRight", "borderRadiusBottomLeft"];
-    if (corners.every((c) => typeof shape[c] === "number")) {
-      const values = corners.map((c) => normalizeNumber(shape[c]));
-      const allEqual = values.every((v) => v === values[0]);
-      if (allEqual) {
-        tally(report, applyMatch(report, shape, idx.borderRadius.get(values[0]), corners, "borderRadius", force));
-      } else {
-        corners.forEach((c, i) => {
-          tally(report, applyMatch(report, shape, idx.borderRadius.get(values[i]), [c], c, force));
-        });
+    if (i % CHUNK_SIZE === CHUNK_SIZE - 1 || i === shapes.length - 1) {
+      if (shapes.length > 300) {
+        log(`Procesadas ${i + 1}/${shapes.length}...`);
       }
-    }
-
-    // Texto: primero intentamos el token de Typography completo (combo
-    // exacto), y si no hay match exacto, probamos cada propiedad suelta.
-    if (shape.type === "text") {
-      const famKey = shape.fontFamily && shape.fontFamily !== "mixed" ? String(shape.fontFamily).trim().toLowerCase() : null;
-      const sizeKey = normalizeNumber(shape.fontSize);
-      const weightKey = normalizeWeight(shape.fontWeight, shape.fontStyle === "italic");
-      const lsKey = normalizeNumber(shape.letterSpacing);
-      const caseKey = normalizeTextCase(shape.textTransform);
-      const decKey = normalizeTextDecoration(shape.textDecoration);
-
-      const typoKey = [famKey || "", sizeKey, weightKey, lsKey, caseKey, decKey].join("|");
-      const typoMatch = idx.typography.get(typoKey);
-
-      if (typoMatch && typoMatch.length > 0) {
-        tally(report, applyMatch(report, shape, typoMatch, ["typography"], "typography", force));
-      } else {
-        if (famKey) tally(report, applyMatch(report, shape, idx.fontFamilies.get(famKey), ["fontFamilies"], "fontFamilies", force));
-        if (sizeKey !== null) tally(report, applyMatch(report, shape, idx.fontSizes.get(sizeKey), ["fontSize"], "fontSize", force));
-        if (weightKey !== null) tally(report, applyMatch(report, shape, idx.fontWeights.get(weightKey), ["fontWeight"], "fontWeight", force));
-        if (lsKey !== null) tally(report, applyMatch(report, shape, idx.letterSpacing.get(lsKey), ["letterSpacing"], "letterSpacing", force));
-      }
+      // Cede el control al navegador entre lotes para que la pestaña no se
+      // quede congelada mientras se procesan muchas capas.
+      await sleep(0);
     }
   }
 
@@ -293,22 +386,14 @@ function run(options, log, done) {
   done(report);
 }
 
-function tally(report, result) {
-  if (result === "unmatched") report.unmatched++;
-  else if (result === "skipped") report.skipped++;
-  // "applied" y "error" ya se cuentan dentro de applyMatch
-}
-
 // ---------- Comunicación con la UI ----------
 
 penpot.ui.onMessage((msg) => {
   if (!msg || msg.type !== "run") return;
   const log = (text) => penpot.ui.sendMessage({ type: "log", text });
-  try {
-    run(msg.options || {}, log, (report) => {
-      penpot.ui.sendMessage({ type: "result", report });
-    });
-  } catch (err) {
+  run(msg.options || {}, log, (report) => {
+    penpot.ui.sendMessage({ type: "result", report });
+  }).catch((err) => {
     penpot.ui.sendMessage({ type: "error", message: (err && err.message) || String(err) });
-  }
+  });
 });
