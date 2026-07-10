@@ -3,29 +3,33 @@
 <head>
 <meta charset="utf-8" />
 <style>
-  :root { color-scheme: light dark; }
+  :root { color-scheme: light; }
+  html, body {
+    background: #ffffff !important;
+  }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     font-size: 12px;
     margin: 0;
     padding: 14px;
-    color: #1a1a1a;
+    color: #1a1a1a !important;
   }
-  h2 { font-size: 14px; margin: 0 0 4px; }
-  p.hint { color: #666; margin: 0 0 14px; line-height: 1.4; }
+  h2 { font-size: 14px; margin: 0 0 4px; color: #1a1a1a !important; }
+  p.hint { color: #666 !important; margin: 0 0 14px; line-height: 1.4; }
   fieldset {
     border: 1px solid #ddd;
     border-radius: 8px;
     padding: 10px 12px;
     margin: 0 0 12px;
   }
-  legend { font-weight: 600; padding: 0 4px; }
+  legend { font-weight: 600; padding: 0 4px; color: #1a1a1a !important; }
   label {
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 4px 0;
     cursor: pointer;
+    color: #1a1a1a !important;
   }
   button {
     font-size: 13px;
@@ -53,6 +57,7 @@
     max-height: 220px;
     overflow-y: auto;
     white-space: pre-wrap;
+    color: #1a1a1a !important;
   }
   .summary {
     margin-top: 10px;
@@ -64,6 +69,7 @@
     background: #f0f0f0;
     border-radius: 6px;
     padding: 6px 8px;
+    color: #1a1a1a !important;
   }
   .stat b { display: block; font-size: 16px; }
   .stat.applied b { color: #1a7f37; }
