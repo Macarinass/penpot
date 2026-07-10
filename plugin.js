@@ -14,7 +14,13 @@
 //
 // No inventa valores nuevos ni crea tokens: solo reconecta lo que ya coincide.
 
-penpot.ui.open("Reconectar tokens", "ui.html", { width: 400, height: 700 });
+// La "v=2" en la URL es a propósito: GitHub Pages sirve ui.html con
+// cache-control: max-age=600 (10 min), y el navegador cachea ese fetch de
+// forma independiente al de plugin.js. Sin un parámetro que cambie en cada
+// versión, Penpot puede seguir mostrando una versión vieja de ui.html
+// aunque plugin.js ya se haya actualizado. Sube el número cada vez que
+// cambies ui.html.
+penpot.ui.open("Reconectar tokens", "ui.html?v=2", { width: 400, height: 700 });
 
 // ---------- Normalización de valores para poder compararlos ----------
 
