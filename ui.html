@@ -16,20 +16,29 @@
   }
   h2 { font-size: 14px; margin: 0 0 4px; color: #1a1a1a !important; }
   p.hint { color: #666 !important; margin: 0 0 14px; line-height: 1.4; }
-  fieldset {
+  .group {
     border: 1px solid #ddd;
     border-radius: 8px;
     padding: 10px 12px;
     margin: 0 0 12px;
   }
-  legend { font-weight: 600; padding: 0 4px; color: #1a1a1a !important; }
-  label {
+  .group-title {
+    font-weight: 600;
+    font-size: 12px;
+    margin: 0 0 6px;
+    color: #1a1a1a !important;
+  }
+  .option {
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 4px 0;
     cursor: pointer;
+  }
+  .option span {
     color: #1a1a1a !important;
+    font-size: 12px !important;
+    display: inline-block !important;
   }
   button {
     font-size: 13px;
@@ -85,16 +94,16 @@
     coincide exactamente.
   </p>
 
-  <fieldset>
-    <legend>Ámbito</legend>
-    <label><input type="radio" name="scope" value="selection" checked /> Solo la selección actual</label>
-    <label><input type="radio" name="scope" value="page" /> Toda la página</label>
-  </fieldset>
+  <div class="group">
+    <div class="group-title">Ámbito</div>
+    <label class="option"><input type="radio" name="scope" value="selection" checked /><span>Solo la selección actual</span></label>
+    <label class="option"><input type="radio" name="scope" value="page" /><span>Toda la página</span></label>
+  </div>
 
-  <fieldset>
-    <legend>Opciones</legend>
-    <label><input type="checkbox" id="force" /> Reasignar aunque ya tenga un token vinculado</label>
-  </fieldset>
+  <div class="group">
+    <div class="group-title">Opciones</div>
+    <label class="option"><input type="checkbox" id="force" /><span>Reasignar aunque ya tenga un token vinculado</span></label>
+  </div>
 
   <button id="run" class="primary">Reconectar tokens</button>
 
