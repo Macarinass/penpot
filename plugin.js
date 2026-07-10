@@ -301,7 +301,7 @@ function tally(report, result) {
 
 // ---------- Comunicación con la UI ----------
 
-penpot.ui.onmessage = (msg) => {
+penpot.ui.onMessage((msg) => {
   if (!msg || msg.type !== "run") return;
   const log = (text) => penpot.ui.sendMessage({ type: "log", text });
   try {
@@ -311,4 +311,4 @@ penpot.ui.onmessage = (msg) => {
   } catch (err) {
     penpot.ui.sendMessage({ type: "error", message: (err && err.message) || String(err) });
   }
-};
+});
