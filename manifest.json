@@ -2,7 +2,7 @@
   "name": "Reconectar tokens (Figma → Penpot)",
   "description": "Busca en las capas seleccionadas (o en toda la página) los valores que vinieron pegados desde Figma y los reconecta a los tokens de Penpot que ya tengan ese mismo valor.",
   "version": 2,
-  "code": "plugin.js",
+  "code": "plugin.v3.js",
   "icon": "icon.svg",
   "permissions": [
     "content:read",
