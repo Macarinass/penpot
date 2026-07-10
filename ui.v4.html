@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { color-scheme: light; }
+  html, body {
+    background: #ffffff !important;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 12px;
+    margin: 0;
+    padding: 14px;
+    color: #1a1a1a !important;
+  }
+  h2 { font-size: 14px; margin: 0 0 4px; color: #1a1a1a !important; }
+  p.hint { color: #666 !important; margin: 0 0 14px; line-height: 1.4; }
+  .group {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin: 0 0 12px;
+  }
+  .group-title {
+    font-weight: 600;
+    font-size: 12px;
+    margin: 0 0 6px;
+    color: #1a1a1a !important;
+  }
+  .option {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    cursor: pointer;
+  }
+  .option span {
+    color: #1a1a1a !important;
+    font-size: 12px !important;
+    display: inline-block !important;
+  }
+  .field { margin: 0 0 8px; }
+  .field label {
+    display: block;
+    font-size: 11px;
+    color: #444 !important;
+    margin: 0 0 3px;
+  }
+  .field textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    color: #1a1a1a !important;
+    background: #fff !important;
+    resize: vertical;
+    min-height: 70px;
+  }
+  .field-note { color: #888 !important; font-size: 10px; margin: 4px 0 0; line-height: 1.4; }
+  .field-note b { color: #666 !important; }
+  #jsonStatus { font-size: 10px; margin: 4px 0 0; line-height: 1.4; }
+  #jsonStatus.ok { color: #1a7f37 !important; }
+  #jsonStatus.err { color: #cf222e !important; }
+  button {
+    font-size: 13px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    background: #fff;
+    cursor: pointer;
+    width: 100%;
+  }
+  button.primary {
+    background: #1a1a1a;
+    color: #fff;
+    border-color: #1a1a1a;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #log {
+    margin-top: 12px;
+    background: #f6f6f6;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    max-height: 220px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    color: #1a1a1a !important;
+  }
+  .summary {
+    margin-top: 10px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .stat {
+    background: #f0f0f0;
+    border-radius: 6px;
+    padding: 6px 8px;
+    color: #1a1a1a !important;
+  }
+  .stat b { display: block; font-size: 16px; }
+  .stat.applied b { color: #1a7f37; }
+  .stat.unmatched b { color: #9a6700; }
+  .stat.ambiguous b { color: #9a6700; }
+  .stat.errors b { color: #cf222e; }
+</style>
+</head>
+<body>
+  <h2>Reconectar tokens</h2>
+  <p class="hint">
+    Busca valores sueltos (pegados desde Figma) en las capas y los reconecta
+    a los tokens que ya tengas importados en este archivo, cuando el valor
+    coincide exactamente.
+  </p>
+
+  <div class="group">
+    <div class="group-title">Ámbito</div>
+    <label class="option"><input type="radio" name="scope" value="selection" checked /><span>Solo la selección actual</span></label>
+    <label class="option"><input type="radio" name="scope" value="page" /><span>Toda la página</span></label>
+  </div>
+
+  <div class="group">
+    <div class="group-title">Opciones</div>
+    <label class="option"><input type="checkbox" id="force" /><span>Reasignar aunque ya tenga un token vinculado</span></label>
+  </div>
+
+  <div class="group">
+    <div class="group-title">Desambiguar con el nombre real de Figma (opcional)</div>
+    <div class="field">
+      <label for="figmaJson">JSON de variables de Figma</label>
+      <textarea id="figmaJson" placeholder='{"color": {"#eeeff2": ["color/bg/secondary"]}, "fontSizes": {"14": ["font/subtitle/200/size"]}}'></textarea>
+    </div>
+    <p id="jsonStatus"></p>
+    <p class="field-note">
+      Cuando un valor coincide con <b>varios</b> tokens a la vez (p.ej. dos
+      colores distintos que hoy son el mismo hex), no hay forma de adivinar
+      cuál es el correcto solo mirando el valor — hace falta el nombre real
+      que tenía en Figma. Para eso: copia el link del frame de Figma y
+      pídeselo a Claude en el chat; te devuelve este JSON ya generado a
+      partir de las variables reales de ese frame, listo para pegar aquí.
+      Si lo dejas vacío, esos casos no se tocan y se listan al final para que
+      los revises tú a mano.
+    </p>
+  </div>
+
+  <button id="run" class="primary">Reconectar tokens</button>
+
+  <div id="log" style="display:none"></div>
+  <div id="summary" class="summary" style="display:none"></div>
+
+  <script>
+    const runBtn = document.getElementById("run");
+    const logEl = document.getElementById("log");
+    const summaryEl = document.getElementById("summary");
+    const figmaJsonEl = document.getElementById("figmaJson");
+    const jsonStatusEl = document.getElementById("jsonStatus");
+
+    // Recordar lo que se pegó la última vez, solo en este navegador.
+    try {
+      figmaJsonEl.value = localStorage.getItem("rt_figmaJson") || "";
+    } catch (e) {
+      /* localStorage puede no estar disponible en algún contexto; no pasa nada */
+    }
+
+    function validateJson() {
+      const raw = figmaJsonEl.value.trim();
+      if (!raw) {
+        jsonStatusEl.textContent = "";
+        jsonStatusEl.className = "";
+        return null;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        const cats = Object.keys(parsed);
+        const total = cats.reduce((sum, c) => sum + Object.keys(parsed[c] || {}).length, 0);
+        jsonStatusEl.textContent = `✓ JSON válido: ${total} valores en ${cats.length} categorías (${cats.join(", ")}).`;
+        jsonStatusEl.className = "ok";
+        return parsed;
+      } catch (err) {
+        jsonStatusEl.textContent = "✗ Ese texto no es JSON válido — revísalo (o déjalo vacío).";
+        jsonStatusEl.className = "err";
+        return undefined; // undefined = inválido, distinto de null = vacío
+      }
+    }
+
+    figmaJsonEl.addEventListener("input", validateJson);
+    validateJson();
+
+    function appendLog(text) {
+      logEl.style.display = "block";
+      logEl.textContent += (logEl.textContent ? "\n" : "") + text;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    runBtn.addEventListener("click", async () => {
+      const hints = validateJson();
+      if (hints === undefined) {
+        // JSON inválido: no seguimos, para que no se pierda silenciosamente.
+        return;
+      }
+
+      logEl.textContent = "";
+      summaryEl.style.display = "none";
+      runBtn.disabled = true;
+      runBtn.textContent = "Reconectando...";
+
+      const scope = document.querySelector('input[name="scope"]:checked').value;
+      const force = document.getElementById("force").checked;
+
+      try {
+        localStorage.setItem("rt_figmaJson", figmaJsonEl.value);
+      } catch (e) {
+        /* no-op */
+      }
+
+      parent.postMessage({ type: "run", options: { scope, force, hints } }, "*");
+    });
+
+    window.addEventListener("message", (event) => {
+      const msg = event.data;
+      if (!msg) return;
+
+      if (msg.type === "log") {
+        appendLog(msg.text);
+      } else if (msg.type === "result") {
+        const r = msg.report;
+        appendLog(
+          `Aplicados: ${r.applied} (${r.resolvedByFigma || 0} desambiguados con el JSON de Figma) · Sin match: ${r.unmatched} · Ya vinculados (omitidos): ${r.skipped || 0} · Ambiguos: ${r.ambiguous} · Errores: ${r.errors.length}`
+        );
+        if (r.ambiguousDetails && r.ambiguousDetails.length) {
+          appendLog("--- Ambiguos (revisar a mano, o pega el JSON de Figma para esta capa y vuelve a correrlo) ---");
+          r.ambiguousDetails.slice(0, 30).forEach((d) => appendLog("• " + d));
+          if (r.ambiguousDetails.length > 30) appendLog(`... y ${r.ambiguousDetails.length - 30} más.`);
+        }
+        if (r.errors.length) {
+          appendLog("--- Errores ---");
+          r.errors.slice(0, 30).forEach((e) => appendLog("⚠ " + e));
+        }
+        summaryEl.style.display = "grid";
+        summaryEl.innerHTML = `
+          <div class="stat applied"><b>${r.applied}</b>aplicados</div>
+          <div class="stat unmatched"><b>${r.unmatched}</b>sin match</div>
+          <div class="stat ambiguous"><b>${r.ambiguous}</b>ambiguos</div>
+          <div class="stat"><b>${r.skipped || 0}</b>ya vinculados</div>
+          <div class="stat errors"><b>${r.errors.length}</b>errores</div>
+        `;
+        runBtn.disabled = false;
+        runBtn.textContent = "Reconectar tokens";
+      } else if (msg.type === "error") {
+        appendLog("✗ Error: " + msg.message);
+        runBtn.disabled = false;
+        runBtn.textContent = "Reconectar tokens";
+      }
+    });
+  </script>
+</body>
+</html>

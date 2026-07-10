@@ -1,0 +1,27 @@
+{
+  "color": {
+    "#303741": ["color/txt/interactive-tertiary"],
+    "#eeeff2": ["color/bg/secondary"],
+    "#272d35": ["color/txt/interactive-tertiary-hover"],
+    "#e3e6ea": ["color/bg/interactive-tertiary-hover"],
+    "#00707e": ["color/border/focus"],
+    "#909ead": ["color/txt/disabled"],
+    "#d9dde3": ["color/bg/disabled"],
+    "#556372": ["color/txt/secondary"],
+    "#914aff": ["color/data/semantic/border/info"]
+  },
+  "fontSizes": {
+    "14": ["font/subtitle/200/size", "font/body/400/size"]
+  },
+  "fontWeights": {
+    "700": ["font/subtitle/200/style"],
+    "500": ["font/body/400/style"]
+  },
+  "fontFamilies": {
+    "forfuture sans": ["font/subtitle/200/family", "font/body/400/family"]
+  },
+  "borderRadius": {
+    "4": ["radius/md"],
+    "0": ["radius/none"]
+  }
+}
