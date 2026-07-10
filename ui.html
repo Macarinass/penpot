@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 12px;
+    margin: 0;
+    padding: 14px;
+    color: #1a1a1a;
+  }
+  h2 { font-size: 14px; margin: 0 0 4px; }
+  p.hint { color: #666; margin: 0 0 14px; line-height: 1.4; }
+  fieldset {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin: 0 0 12px;
+  }
+  legend { font-weight: 600; padding: 0 4px; }
+  label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    cursor: pointer;
+  }
+  button {
+    font-size: 13px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    background: #fff;
+    cursor: pointer;
+    width: 100%;
+  }
+  button.primary {
+    background: #1a1a1a;
+    color: #fff;
+    border-color: #1a1a1a;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #log {
+    margin-top: 12px;
+    background: #f6f6f6;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    max-height: 220px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+  .summary {
+    margin-top: 10px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .stat {
+    background: #f0f0f0;
+    border-radius: 6px;
+    padding: 6px 8px;
+  }
+  .stat b { display: block; font-size: 16px; }
+  .stat.applied b { color: #1a7f37; }
+  .stat.unmatched b { color: #9a6700; }
+  .stat.errors b { color: #cf222e; }
+</style>
+</head>
+<body>
+  <h2>Reconectar tokens</h2>
+  <p class="hint">
+    Busca valores sueltos (pegados desde Figma) en las capas y los reconecta
+    a los tokens que ya tengas importados en este archivo, cuando el valor
+    coincide exactamente.
+  </p>
+
+  <fieldset>
+    <legend>Ámbito</legend>
+    <label><input type="radio" name="scope" value="selection" checked /> Solo la selección actual</label>
+    <label><input type="radio" name="scope" value="page" /> Toda la página</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Opciones</legend>
+    <label><input type="checkbox" id="force" /> Reasignar aunque ya tenga un token vinculado</label>
+  </fieldset>
+
+  <button id="run" class="primary">Reconectar tokens</button>
+
+  <div id="log" style="display:none"></div>
+  <div id="summary" class="summary" style="display:none"></div>
+
+  <script>
+    const runBtn = document.getElementById("run");
+    const logEl = document.getElementById("log");
+    const summaryEl = document.getElementById("summary");
+
+    function appendLog(text) {
+      logEl.style.display = "block";
+      logEl.textContent += (logEl.textContent ? "\n" : "") + text;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    runBtn.addEventListener("click", () => {
+      logEl.textContent = "";
+      summaryEl.style.display = "none";
+      runBtn.disabled = true;
+      runBtn.textContent = "Reconectando...";
+
+      const scope = document.querySelector('input[name="scope"]:checked').value;
+      const force = document.getElementById("force").checked;
+
+      parent.postMessage({ type: "run", options: { scope, force } }, "*");
+    });
+
+    window.addEventListener("message", (event) => {
+      const msg = event.data;
+      if (!msg) return;
+
+      if (msg.type === "log") {
+        appendLog(msg.text);
+      } else if (msg.type === "result") {
+        const r = msg.report;
+        appendLog(
+          `Aplicados: ${r.applied} · Sin match: ${r.unmatched} · Ya vinculados (omitidos): ${r.skipped || 0} · Ambiguos: ${r.ambiguous} · Errores: ${r.errors.length}`
+        );
+        if (r.errors.length) {
+          r.errors.forEach((e) => appendLog("⚠ " + e));
+        }
+        summaryEl.style.display = "grid";
+        summaryEl.innerHTML = `
+          <div class="stat applied"><b>${r.applied}</b>aplicados</div>
+          <div class="stat unmatched"><b>${r.unmatched}</b>sin match</div>
+          <div class="stat"><b>${r.skipped || 0}</b>ya vinculados</div>
+          <div class="stat errors"><b>${r.errors.length}</b>errores</div>
+        `;
+        runBtn.disabled = false;
+        runBtn.textContent = "Reconectar tokens";
+      } else if (msg.type === "error") {
+        appendLog("✗ Error: " + msg.message);
+        runBtn.disabled = false;
+        runBtn.textContent = "Reconectar tokens";
+      }
+    });
+  </script>
+</body>
+</html>
